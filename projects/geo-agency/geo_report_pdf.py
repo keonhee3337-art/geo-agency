@@ -932,7 +932,7 @@ def generate_pdf(audit: dict, recommendations: list | None = None, before_text: 
     try:
         import weasyprint  # noqa: F401
         return _generate_pdf_weasyprint(audit, recommendations, before_text, output_dir)
-    except ImportError:
+    except (ImportError, Exception):
         return _generate_pdf_fpdf2(audit, recommendations, before_text, output_dir)
 
 
