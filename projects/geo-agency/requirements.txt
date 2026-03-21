@@ -2,4 +2,5 @@ fpdf2
 requests
 python-dotenv
 streamlit
-anthropicweasyprint
+anthropic
+weasyprint
