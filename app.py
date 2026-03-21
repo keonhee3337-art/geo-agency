@@ -1,24 +1,20 @@
 """
-GEO Agency - Streamlit App
-
-Single-company GEO audit tool for client demos and service delivery.
-Input: company name -> GEO audit -> before/after proof -> PDF download
+GEO Agency - Streamlit App (Visual Refresh)
 """
 
 import os
 import sys
-import time
+import re
 from pathlib import Path
 
 import streamlit as st
 
-for _p in [Path(__file__).parent / ".env", Path(__file__).parent.parent / ".env"]:
+for _p in [Path(__file__).parent / ".env", Path(__file__).parent.parent / ".env", Path(__file__).parent.parent.parent / ".env"]:
     if _p.exists():
         from dotenv import load_dotenv
         load_dotenv(dotenv_path=_p)
         break
 
-# Streamlit Cloud: load secrets into env if .env not available
 for _key in ["PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY"]:
     if not os.environ.get(_key):
         try:
@@ -28,241 +24,283 @@ for _key in ["PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY"]:
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-st.set_page_config(page_title="GEO Audit", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="GEO Audit", page_icon="", layout="wide")
 
-st.title("GEO Audit Tool")
-st.caption("AI 가시성 진단 — Generative Engine Optimization")
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+.score-card {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-radius: 16px; padding: 32px 40px; margin: 16px 0;
+    display: flex; align-items: center; gap: 32px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+}
+.score-num { font-size: 80px; font-weight: 700; line-height: 1; min-width: 120px; }
+.score-meta { flex: 1; }
+.score-grade { font-size: 22px; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 6px; }
+.score-sub { font-size: 13px; color: #aaa; }
+.cat-card {
+    background: #1e2130; border-radius: 12px; padding: 20px;
+    text-align: center; height: 100%; border-top: 4px solid transparent;
+}
+.cat-title { font-size: 13px; color: #999; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.cat-pct { font-size: 36px; font-weight: 700; line-height: 1; margin-bottom: 6px; }
+.cat-desc { font-size: 11px; color: #666; }
+.prog-wrap { margin: 6px 0 16px 0; }
+.prog-label { display: flex; justify-content: space-between; font-size: 13px; color: #ccc; margin-bottom: 4px; }
+.prog-bar-bg { background: #2a2a3e; border-radius: 4px; height: 8px; overflow: hidden; }
+.prog-bar-fill { height: 8px; border-radius: 4px; }
+.panel { border-radius: 12px; padding: 20px; min-height: 160px; font-size: 14px; line-height: 1.7; color: #ddd; }
+.panel-before { background: #1a1500; border-left: 4px solid #d97706; }
+.panel-after  { background: #001a0a; border-left: 4px solid #16a34a; }
+.panel-head   { font-size: 12px; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 12px; text-transform: uppercase; }
+.panel-before .panel-head { color: #f59e0b; }
+.panel-after  .panel-head { color: #22c55e; }
+.comp-badge {
+    display: inline-block; background: #2d2d4a; border-radius: 6px;
+    padding: 3px 10px; font-size: 12px; color: #aaa; margin: 2px 4px 2px 0;
+}
+.comp-badge.cited { background: #1a3a1a; color: #4ade80; }
+.section-head {
+    font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+    color: #666; margin: 28px 0 12px 0; padding-bottom: 6px; border-bottom: 1px solid #2a2a3e;
+}
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
 
-st.markdown("""
-**GEO(Generative Engine Optimization)**는 ChatGPT, Perplexity, Claude 같은 AI 시스템이  
-당신의 비즈니스를 추천하도록 최적화하는 것입니다.
-""")
+st.markdown("<h2 style='margin-bottom:2px'>GEO Audit</h2>", unsafe_allow_html=True)
+st.markdown("<p style='color:#888;margin-top:0'>AI visibility diagnosis &mdash; ChatGPT, Perplexity, Claude</p>", unsafe_allow_html=True)
 
-st.divider()
+c1, c2, c3 = st.columns([3, 2, 1])
+with c1:
+    company_name = st.text_input("", placeholder="", label_visibility="collapsed", key="company_name_input")
+    st.caption("Company name (Korean or English)")
+with c2:
+    product_category = st.text_input("", placeholder="", label_visibility="collapsed", key="category_input")
+    st.caption("Product / service category (optional)")
+with c3:
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    run = st.button("Run Audit", type="primary", disabled=not company_name, use_container_width=True)
 
-col1, col2 = st.columns([2, 1])
 
-with col1:
-    company_name = st.text_input(
-        "회사명 (한국어 또는 영어)",
-        placeholder="예: 솔브레인, 현대모비스, 스타트업 이름",
-        help="DART 상장 여부 무관 — 어떤 회사든 가능합니다"
+def _color(pct):
+    if pct >= 70: return "#22c55e"
+    if pct >= 40: return "#f59e0b"
+    return "#ef4444"
+
+def _grade(pct):
+    if pct >= 70: return "High"
+    if pct >= 40: return "Medium"
+    return "Low"
+
+def _progress_bar(label, value, max_val):
+    pct = round(value / max_val * 100) if max_val else 0
+    color = _color(pct)
+    return (
+        f"<div class='prog-wrap'>"
+        f"<div class='prog-label'><span>{label}</span>"
+        f"<span style='color:{color}'>{value}/{max_val}</span></div>"
+        f"<div class='prog-bar-bg'><div class='prog-bar-fill' style='width:{pct}%;background:{color}'></div></div>"
+        f"</div>"
     )
-    product_category = st.text_input(
-        "주요 제품/서비스 카테고리 (선택)",
-        placeholder="예: 반도체 소재, IT 컨설팅, 온라인 쇼핑몰",
-        help="AI 추천 쿼리를 더 정확하게 만들기 위해 사용됩니다"
+
+def _cat_card(title, pct, desc, border_color):
+    color = _color(pct)
+    return (
+        f"<div class='cat-card' style='border-top-color:{border_color}'>"
+        f"<div class='cat-title'>{title}</div>"
+        f"<div class='cat-pct' style='color:{color}'>{pct}%</div>"
+        f"<div class='cat-desc'>{desc}</div>"
+        f"</div>"
     )
 
-with col2:
-    st.markdown("#### 점수 기준")
-    st.markdown("""
-    | 범위 | 등급 |
-    |------|------|
-    | 70-100 | 🟢 High |
-    | 40-69  | 🟡 Medium |
-    | 0-39   | 🔴 Low |
-    """)
-
-run = st.button("GEO 진단 시작", type="primary", disabled=not company_name)
 
 if run and company_name:
+    st.session_state.pop("audit", None)
     st.divider()
 
-    with st.spinner(f"'{company_name}' 분석 중... (약 30-60초)"):
+    with st.spinner(f"Auditing {company_name}... (~30-60s)"):
         try:
             from geo_audit import audit_single_company
             audit = audit_single_company(company_name)
         except Exception as e:
-            st.error(f"GEO 진단 오류: {e}")
+            st.error(f"Audit error: {e}")
             st.stop()
 
     geo_score = audit.get("geo_score", 0)
     breakdown = audit.get("geo_breakdown", {})
-    website = audit.get("website_url") or "찾을 수 없음"
+    website = audit.get("website_url") or "Not found"
 
-    # Score display
-    st.markdown(f"## {company_name} GEO Score")
-    color = "green" if geo_score >= 70 else ("orange" if geo_score >= 40 else "red")
-    label = "High" if geo_score >= 70 else ("Medium" if geo_score >= 40 else "Low")
-    st.markdown(f"<h1 style='color:{color}'>{geo_score}/100 — {label}</h1>", unsafe_allow_html=True)
-    st.caption(f"웹사이트: {website}")
+    score_color = _color(geo_score)
+    grade = _grade(geo_score)
+    st.markdown(
+        f"<div class='score-card'>"
+        f"<div class='score-num' style='color:{score_color}'>{geo_score}</div>"
+        f"<div class='score-meta'>"
+        f"<div class='score-grade' style='color:{score_color}'>{grade} AI Visibility</div>"
+        f"<div class='score-sub'>{company_name} &bull; {website}</div>"
+        f"<div class='score-sub' style='margin-top:8px'>Score out of 100 &mdash; 10 GEO dimensions</div>"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
 
-    # Pull all sub-dimensions
-    citability = breakdown.get("citability", 0)
-    sov = breakdown.get("share_of_voice", 0)
-    ai_bot = breakdown.get("ai_bot_access", breakdown.get("crawler_access", 0))
-    ai_policy = breakdown.get("ai_policy_file", breakdown.get("llms_txt", 0))
-    org_schema = breakdown.get("org_schema", 0)
+    citability     = breakdown.get("citability", 0)
+    sov            = breakdown.get("share_of_voice", 0)
+    ai_bot         = breakdown.get("ai_bot_access", breakdown.get("crawler_access", 0))
+    ai_policy      = breakdown.get("ai_policy_file", breakdown.get("llms_txt", 0))
+    org_schema     = breakdown.get("org_schema", 0)
     content_schema = breakdown.get("content_schema", 0)
-    naver = breakdown.get("naver_presence", 0)
-    kr_sync = breakdown.get("kr_platform_sync", 0)
-    brand_mention = breakdown.get("brand_mention", 0)
-    sentiment_quality = breakdown.get("sentiment_quality", 0)
+    naver          = breakdown.get("naver_presence", 0)
+    kr_sync        = breakdown.get("kr_platform_sync", 0)
+    brand_mention  = breakdown.get("brand_mention", 0)
+    sentiment      = breakdown.get("sentiment_quality", 0)
 
-    # 3 client-facing summary metrics (easy to explain in 30 seconds)
-    # Content: can AI read and understand you?
-    content_score = citability + content_schema + brand_mention  # max 65
-    content_pct = round(content_score / 65 * 100)
-    # Technical Access: can AI find you?
-    access_score = ai_bot + ai_policy + org_schema                # max 45
-    access_pct = round(access_score / 45 * 100)
-    # Market Presence: does AI recommend you?
-    presence_score = sov + naver + kr_sync + sentiment_quality    # max 40
-    presence_pct = round(presence_score / 40 * 100)
+    content_pct  = round((citability + content_schema + brand_mention) / 65 * 100)
+    access_pct   = round((ai_bot + ai_policy + org_schema) / 45 * 100)
+    presence_pct = round((sov + naver + kr_sync + sentiment) / 40 * 100)
 
-    col_content, col_access, col_presence = st.columns(3)
-    with col_content:
-        st.metric(
-            "Content Quality",
-            f"{content_pct}%",
-            help="AI가 귀사 콘텐츠를 읽고 이해할 수 있는지 — 풍부한 텍스트, 구조화된 FAQ, 브랜드 언급"
+    st.markdown("<div class='section-head'>Category Breakdown</div>", unsafe_allow_html=True)
+    cc1, cc2, cc3 = st.columns(3)
+    with cc1:
+        st.markdown(_cat_card("Content Quality", content_pct, "AI can read &amp; understand you", "#6366f1"), unsafe_allow_html=True)
+    with cc2:
+        st.markdown(_cat_card("Technical Access", access_pct, "AI crawlers can find you", "#0ea5e9"), unsafe_allow_html=True)
+    with cc3:
+        st.markdown(_cat_card("Market Presence", presence_pct, "AI recommends you", "#f59e0b"), unsafe_allow_html=True)
+
+    st.markdown("<div class='section-head'>Dimension Detail</div>", unsafe_allow_html=True)
+    pb1, pb2 = st.columns(2)
+    with pb1:
+        st.markdown(
+            _progress_bar("AI Citability", citability, 40) +
+            _progress_bar("Share of Voice", sov, 10) +
+            _progress_bar("AI Bot Access", ai_bot, 20) +
+            _progress_bar("AI Policy File", ai_policy, 10) +
+            _progress_bar("Org Schema", org_schema, 15),
+            unsafe_allow_html=True,
         )
-    with col_access:
-        st.metric(
-            "Technical Access",
-            f"{access_pct}%",
-            help="AI 크롤러가 귀사 사이트에 접근 가능한지 — robots.txt, llms.txt, 스키마 데이터"
-        )
-    with col_presence:
-        st.metric(
-            "Market Presence",
-            f"{presence_pct}%",
-            help="AI가 귀사를 시장에서 인식하고 추천하는지 — 경쟁사 대비 인용, 네이버/카카오, 브랜드 품질"
+    with pb2:
+        st.markdown(
+            _progress_bar("Content Schema", content_schema, 15) +
+            _progress_bar("Naver Presence", naver, 10) +
+            _progress_bar("KR Platform Sync", kr_sync, 10) +
+            _progress_bar("Brand Mention", brand_mention, 10) +
+            _progress_bar("Sentiment Quality", sentiment, 10),
+            unsafe_allow_html=True,
         )
 
-    # Technical detail — collapsed by default
-    with st.expander("기술 세부 점수 (10개 지표)", expanded=False):
-        st.caption("5-category internal scoring (max 150, normalized to /100)")
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.metric("AI Citability", f"{citability}/40")
-            st.metric("Share of Voice", f"{sov}/10")
-            st.metric("AI Bot Access", f"{ai_bot}/20")
-            st.metric("AI Policy File (llms.txt)", f"{ai_policy}/10")
-            st.metric("Org Schema", f"{org_schema}/15")
-        with col_b:
-            st.metric("Content Schema", f"{content_schema}/15")
-            st.metric("Naver Presence", f"{naver}/10")
-            st.metric("KR Platform Sync", f"{kr_sync}/10")
-            st.metric("Brand Mention", f"{brand_mention}/10")
-            st.metric("Sentiment Quality", f"{sentiment_quality}/10")
-
-    # Competitors from SoV
     sov_competitors = audit.get("sov_competitors", [])
     sov_cited = audit.get("sov_cited", False)
     if sov_competitors:
-        cited_label = "포함됨" if sov_cited else "미포함"
-        st.markdown(
-            f"**경쟁사 AI 인용 현황:** {', '.join(sov_competitors[:5])} "
-            f"| 귀사 인용 여부: **{cited_label}**"
-        )
+        st.markdown("<div class='section-head'>Competitor AI Citations</div>", unsafe_allow_html=True)
+        badges = " ".join(f"<span class='comp-badge'>{c}</span>" for c in sov_competitors[:5])
+        my_cls = "comp-badge cited" if sov_cited else "comp-badge"
+        my_lbl = "This company: Cited" if sov_cited else "This company: Not cited"
+        st.markdown(badges + f" &nbsp;<span class='{my_cls}'>{my_lbl}</span>", unsafe_allow_html=True)
 
     st.session_state["audit"] = audit
 
-    # Before/after
-    st.divider()
-    st.markdown("### AI 가시성 현황 (Before)")
-    with st.spinner("AI가 현재 이 회사에 대해 뭐라고 하는지 확인 중..."):
+    st.markdown("<div class='section-head'>Before / After &mdash; AI Response Simulation</div>", unsafe_allow_html=True)
+
+    with st.spinner("Fetching current AI response (Before)..."):
         try:
             from before_after import get_before, get_after
             before = get_before(company_name, product_category)
         except Exception as e:
-            before = f"오류: {e}"
+            before = f"Error: {e}"
 
-    st.info(before[:800] + ("..." if len(before) > 800 else ""))
-    st.session_state["before"] = before
-
-    # Dynamic recommendations based on actual scores
     from geo_audit import generate_dynamic_recommendations
     recs = generate_dynamic_recommendations(breakdown, company_name)
     st.session_state["recs"] = recs
 
-    st.markdown("### GEO 최적화 후 예상 AI 응답 (After)")
-    with st.spinner("최적화 후 AI 응답 시뮬레이션 중..."):
+    with st.spinner("Simulating optimized AI response (After)..."):
         try:
             after = get_after(before, audit, recs, company_name, product_category)
         except Exception as e:
-            after = f"오류: {e}"
+            after = f"Error: {e}"
 
-    st.success(after)
+    st.session_state["before"] = before
     st.session_state["after"] = after
 
-    # PDF generation
-    st.divider()
-    st.markdown("### PDF 리포트 생성")
-    col_pdf, col_kit = st.columns(2)
-    with col_pdf:
-        if st.button("PDF 리포트 다운로드", type="secondary"):
-            with st.spinner("PDF 생성 중..."):
-                try:
-                    from geo_report_pdf import generate_pdf
-                    pdf_path = generate_pdf(audit, recs, before_text=before)
-                    with open(pdf_path, "rb") as f:
-                        pdf_bytes = f.read()
-                    import re
-                    safe_name = re.sub(r"[^\w\-]", "_", company_name)
-                    st.download_button(
-                        label="PDF 다운로드",
-                        data=pdf_bytes,
-                        file_name=f"GEO_Audit_{safe_name}.pdf",
-                        mime="application/pdf",
-                    )
-                    st.success(f"PDF 생성 완료: {Path(pdf_path).name}")
-                except Exception as e:
-                    st.error(f"PDF 생성 오류: {e}")
+    col_before, col_after = st.columns(2)
+    with col_before:
+        truncated = before[:700] + ("..." if len(before) > 700 else "")
+        st.markdown(
+            f"<div class='panel panel-before'><div class='panel-head'>Before GEO Optimization</div>{truncated}</div>",
+            unsafe_allow_html=True,
+        )
+    with col_after:
+        st.markdown(
+            f"<div class='panel panel-after'><div class='panel-head'>After GEO Optimization</div>{after}</div>",
+            unsafe_allow_html=True,
+        )
 
-    with col_kit:
-        if st.button("구현 파일 다운로드", type="secondary", help="개발자에게 전달할 robots.txt, llms.txt, JSON-LD, 체크리스트"):
-            with st.spinner("구현 파일 생성 중..."):
-                try:
-                    from geo_deliverables import generate_deliverables, zip_deliverables
-                    files = generate_deliverables(
-                        audit,
-                        company_name=company_name,
-                        product_category=product_category,
-                    )
-                    zip_path = zip_deliverables(files)
-                    with open(zip_path, "rb") as f:
-                        zip_bytes = f.read()
-                    import re
-                    safe_name = re.sub(r"[^\w\-]", "_", company_name)
-                    st.download_button(
-                        label="Implementation Kit 다운로드",
-                        data=zip_bytes,
-                        file_name=f"GEO_Implementation_{safe_name}.zip",
-                        mime="application/zip",
-                    )
-                    st.success(f"구현 파일 {len(files)}개 생성 완료")
-                    with st.expander("포함된 파일 목록"):
-                        for fname in files:
-                            st.markdown(f"- `{fname}`")
-                except Exception as e:
-                    st.error(f"구현 파일 생성 오류: {e}")
+    st.markdown("<div class='section-head'>Downloads</div>", unsafe_allow_html=True)
+    safe_name = re.sub(r"[^\w\-]", "_", company_name)
+    dl1, dl2 = st.columns(2)
 
-# PDF download if already generated (persists in session)
+    with dl1:
+        try:
+            from geo_report_pdf import generate_pdf
+            pdf_path = generate_pdf(audit, recs, before_text=before)
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+            st.download_button(
+                label="PDF Report",
+                data=pdf_bytes,
+                file_name=f"GEO_Audit_{safe_name}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.error(f"PDF error: {e}")
+
+    with dl2:
+        try:
+            from geo_deliverables import generate_deliverables, zip_deliverables
+            files = generate_deliverables(audit, company_name=company_name, product_category=product_category)
+            zip_path = zip_deliverables(files)
+            with open(zip_path, "rb") as f:
+                zip_bytes = f.read()
+            st.download_button(
+                label=f"Implementation Kit ({len(files)} files)",
+                data=zip_bytes,
+                file_name=f"GEO_Implementation_{safe_name}.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.error(f"Kit error: {e}")
+
+
 elif "audit" in st.session_state:
-    st.info("이전 진단 결과가 있습니다. 새 회사를 입력하거나 PDF를 다운로드하세요.")
+    st.info("Previous audit loaded. Enter a new company to run a fresh audit.")
     audit = st.session_state["audit"]
-    recs = st.session_state.get("recs", [])
+    recs  = st.session_state.get("recs", [])
     before = st.session_state.get("before", "")
-    if st.button("PDF 리포트 다운로드 (이전 결과)", type="secondary"):
-        with st.spinner("PDF 생성 중..."):
-            try:
-                from geo_report_pdf import generate_pdf
-                pdf_path = generate_pdf(audit, recs, before_text=before)
-                with open(pdf_path, "rb") as f:
-                    pdf_bytes = f.read()
-                import re
-                safe_name = re.sub(r"[^\w\-]", "_", audit.get("corp_name", "company"))
-                st.download_button(
-                    label="PDF 다운로드",
-                    data=pdf_bytes,
-                    file_name=f"GEO_Audit_{safe_name}.pdf",
-                    mime="application/pdf",
-                )
-            except Exception as e:
-                st.error(f"PDF 생성 오류: {e}")
+    safe_name = re.sub(r"[^\w\-]", "_", audit.get("corp_name", "company"))
+    try:
+        from geo_report_pdf import generate_pdf
+        pdf_path = generate_pdf(audit, recs, before_text=before)
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+        st.download_button(
+            label="PDF Report (previous audit)",
+            data=pdf_bytes,
+            file_name=f"GEO_Audit_{safe_name}.pdf",
+            mime="application/pdf",
+        )
+    except Exception as e:
+        st.error(f"PDF error: {e}")
+
+else:
+    st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='text-align:center;color:#555;font-size:15px'>Enter a company name above and click <strong>Run Audit</strong></div>",
+        unsafe_allow_html=True,
+    )
 
 st.divider()
 st.caption("Built by Keonhee Kim | SKKU Business Administration | GEO Consulting")
