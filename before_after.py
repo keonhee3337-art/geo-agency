@@ -31,6 +31,26 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 TIMEOUT = 15
 
+_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
+
+def _get_cheapest_model() -> str:
+    """Pick the cheapest available Claude model via the Models API. Falls back to Haiku."""
+    if not ANTHROPIC_API_KEY:
+        return _DEFAULT_MODEL
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        models = client.models.list()
+        # Prefer haiku > sonnet > opus by checking model id prefix
+        for tier in ("haiku", "sonnet", "opus"):
+            for m in models.data:
+                if tier in m.id.lower():
+                    return m.id
+    except Exception:
+        pass
+    return _DEFAULT_MODEL
+
 
 def _perplexity(prompt: str, model: str = "sonar") -> str:
     if not PERPLEXITY_API_KEY:
@@ -58,8 +78,9 @@ def _anthropic(prompt: str, system: str = "") -> str:
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        model = _get_cheapest_model()
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=model,
             max_tokens=512,
             system=system or "You are a GEO optimization expert.",
             messages=[{"role": "user", "content": prompt}],
